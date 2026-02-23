@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { StoreState, generateId, generateAccountNumber, simpleHash, verifyHash, randomIP, randomDevice, randomGeo, evaluateTransactionRisk, checkSecurityControls, mlPredict } from '../store';
-import { User, Account, Transaction, FraudAlert } from '../types';
-import { UserPlus, LogIn, Send, History, Lock, Unlock, Eye, EyeOff, ArrowRight, Wallet } from 'lucide-react';
+import { User, Account, Transaction, LoginLog, FraudAlert } from '../types';
+import { UserPlus, LogIn, Send, History, DollarSign, Lock, Unlock, Eye, EyeOff } from 'lucide-react';
 
 interface CoreBankingProps {
   state: StoreState;
@@ -56,9 +56,13 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
       balance: 50000, dailyTransferred: 0, dailyTransferDate: '', isFrozen: false, type: 'checking'
     };
 
-    setState(prev => ({ ...prev, users: [...prev.users, newUser], accounts: [...prev.accounts, newAccount] }));
+    setState(prev => ({
+      ...prev,
+      users: [...prev.users, newUser],
+      accounts: [...prev.accounts, newAccount]
+    }));
     addLog(`[BANKING] New user registered: ${username} (Account: ${newAccount.accountNumber})`);
-    showMsg(`Account created — #${newAccount.accountNumber} with ₱50,000 balance`, 'success');
+    showMsg(`User ${username} registered! Account #${newAccount.accountNumber} created with ₱50,000 balance. Password hash: ${simpleHash(password).substring(0, 25)}...`, 'success');
     setRegisterForm({ username: '', fullName: '', email: '', password: '' });
   };
 
@@ -73,9 +77,13 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
 
     if (!user) { showMsg('User not found', 'error'); return; }
 
+    // Check security controls
     const secCheck = checkSecurityControls('login', state, { userId: user.id, ip });
     if (!secCheck.allowed) {
-      const log = { id: generateId(), userId: user.id, username, timestamp: Date.now(), ip, device, success: false, geoLocation: geo, blocked: true, reason: secCheck.reason };
+      const log: LoginLog = {
+        id: generateId(), userId: user.id, username, timestamp: Date.now(),
+        ip, device, success: false, geoLocation: geo, blocked: true, reason: secCheck.reason
+      };
       setState(prev => ({ ...prev, loginLogs: [...prev.loginLogs, log] }));
       addLog(`[SECURITY] Login BLOCKED for ${username}: ${secCheck.reason}`);
       showMsg(`Login blocked: ${secCheck.reason}`, 'error');
@@ -83,14 +91,20 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
     }
 
     const success = verifyHash(password, user.passwordHash);
-    const log = { id: generateId(), userId: user.id, username, timestamp: Date.now(), ip, device, success, geoLocation: geo, blocked: false, reason: null };
+    const log: LoginLog = {
+      id: generateId(), userId: user.id, username, timestamp: Date.now(),
+      ip, device, success, geoLocation: geo, blocked: false, reason: null
+    };
 
     if (success) {
+      // Check for suspicious login
       const isNewIP = !user.knownIPs.includes(ip);
       const isNewDevice = !user.knownDevices.includes(device);
+      
       setState(prev => {
         const updatedUsers = prev.users.map(u => u.id === user.id ? { ...u, failedLoginAttempts: 0, isLocked: false, lockoutUntil: null } : u);
         const newState = { ...prev, currentUser: user, users: updatedUsers, loginLogs: [...prev.loginLogs, log] };
+        
         if (isNewIP || isNewDevice) {
           const alert: FraudAlert = {
             id: generateId(), transactionId: null, loginLogId: log.id,
@@ -104,7 +118,7 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
         return newState;
       });
       addLog(`[AUTH] Login SUCCESS: ${username} from ${ip} (${device}) @ ${geo}`);
-      showMsg(`Welcome, ${user.fullName} — ${ip} · ${device} · ${geo}`, 'success');
+      showMsg(`Welcome back, ${user.fullName}! IP: ${ip}, Device: ${device}, Location: ${geo}`, 'success');
     } else {
       setState(prev => {
         const updatedUsers = prev.users.map(u => {
@@ -112,14 +126,20 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
             const attempts = u.failedLoginAttempts + 1;
             const lockCtrl = prev.securityControls.find(c => c.category === 'lockout');
             const maxAttempts = lockCtrl?.enabled ? (lockCtrl.config.maxFailedAttempts as number) : 999;
-            return { ...u, failedLoginAttempts: attempts, isLocked: attempts >= maxAttempts, lockoutUntil: attempts >= maxAttempts ? Date.now() + 900000 : null };
+            const shouldLock = attempts >= maxAttempts;
+            return {
+              ...u,
+              failedLoginAttempts: attempts,
+              isLocked: shouldLock,
+              lockoutUntil: shouldLock ? Date.now() + 15 * 60000 : null
+            };
           }
           return u;
         });
         return { ...prev, users: updatedUsers, loginLogs: [...prev.loginLogs, log] };
       });
       addLog(`[AUTH] Login FAILED: ${username} - Invalid password (attempt #${user.failedLoginAttempts + 1})`);
-      showMsg(`Invalid credentials — attempt #${user.failedLoginAttempts + 1}`, 'error');
+      showMsg(`Invalid password! Failed attempt #${user.failedLoginAttempts + 1}`, 'error');
     }
     setLoginForm({ username: '', password: '' });
   };
@@ -144,13 +164,16 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
     const risk = evaluateTransactionRisk(txPartial, state);
     const mlScore = mlPredict(txPartial, state);
 
+    // Check security controls
     const secCheck = checkSecurityControls('transaction', state, {
       userId: fromAcc.userId, ip, amount, riskScore: risk.riskScore
     });
 
     if (!secCheck.allowed) {
+      const blockedId = generateId();
       const tx: Transaction = {
-        ...txPartial as Transaction, id: generateId(),
+        ...txPartial as Transaction,
+        id: blockedId,
         type: 'transfer', status: 'blocked',
         riskScore: risk.riskScore, isFlagged: true, fraudReasons: [...risk.reasons, secCheck.reason || ''],
         reviewStatus: null, reviewedBy: null, reviewNote: null,
@@ -166,14 +189,15 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
     if (secCheck.requiresMFA && !mfaRequired) {
       setMfaRequired(true);
       setPendingTransfer({ from: fromAccId, to: toAccId, amount });
-      showMsg(`MFA required — Simulated OTP: 123456`, 'warning');
+      showMsg(`MFA required! Simulated OTP: 123456. Risk score: ${risk.riskScore}`, 'warning');
       addLog(`[SECURITY] Step-up auth triggered for ₱${amount.toLocaleString()} transfer (risk: ${risk.riskScore})`);
       return;
     }
 
     const status = risk.isFlagged ? 'flagged' : 'completed';
     const tx: Transaction = {
-      id: generateId(), fromAccountId: fromAcc.id, toAccountId: toAcc.id,
+      id: generateId(),
+      fromAccountId: fromAcc.id, toAccountId: toAcc.id,
       fromUserId: fromAcc.userId, toUserId: toAcc.userId,
       amount, timestamp: Date.now(), type: 'transfer', status,
       riskScore: risk.riskScore, isFlagged: risk.isFlagged,
@@ -191,28 +215,34 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
         if (a.id === toAcc.id) return { ...a, balance: a.balance + amount };
         return a;
       });
+      
       let newAlerts = prev.fraudAlerts;
       if (risk.isFlagged) {
-        newAlerts = [...prev.fraudAlerts, {
+        const alert: FraudAlert = {
           id: generateId(), transactionId: tx.id, loginLogId: null,
-          type: 'transaction' as const,
-          severity: (risk.riskScore >= 80 ? 'critical' : risk.riskScore >= 60 ? 'high' : risk.riskScore >= 40 ? 'medium' : 'low') as 'critical' | 'high' | 'medium' | 'low',
+          type: 'transaction',
+          severity: risk.riskScore >= 80 ? 'critical' : risk.riskScore >= 60 ? 'high' : risk.riskScore >= 40 ? 'medium' : 'low',
           description: `Suspicious transfer: ₱${amount.toLocaleString()} | ${risk.reasons.join(', ')}`,
-          timestamp: Date.now(), status: 'open', assignedTo: null, mitreId: null, mitreTactic: null
-        }];
+          timestamp: Date.now(), status: 'open', assignedTo: null,
+          mitreId: null, mitreTactic: null
+        };
+        newAlerts = [...prev.fraudAlerts, alert];
       }
+
       return { ...prev, accounts: updatedAccounts, transactions: [...prev.transactions, tx], fraudAlerts: newAlerts };
     });
 
-    addLog(`[TRANSFER] ₱${amount.toLocaleString()} from ${fromAccId} → ${toAccId} | Risk: ${risk.riskScore} | Status: ${status}`);
+    addLog(`[TRANSFER] ₱${amount.toLocaleString()} from ${fromAccId} → ${toAccId} | Risk: ${risk.riskScore} | Status: ${status} | ML: ${(mlScore * 100).toFixed(1)}%`);
     showMsg(
       risk.isFlagged
-        ? `Transfer flagged — ₱${amount.toLocaleString()}, Risk: ${risk.riskScore}`
-        : `Transfer complete — ₱${amount.toLocaleString()}`,
+        ? `Transfer flagged! Amount: ₱${amount.toLocaleString()}, Risk Score: ${risk.riskScore}. Reasons: ${risk.reasons.join('; ')}`
+        : `Transfer successful! ₱${amount.toLocaleString()} sent. Risk Score: ${risk.riskScore}`,
       risk.isFlagged ? 'warning' : 'success'
     );
     setTransferForm({ fromAccount: '', toAccount: '', amount: '' });
-    setMfaRequired(false); setPendingTransfer(null); setMfaCode('');
+    setMfaRequired(false);
+    setPendingTransfer(null);
+    setMfaCode('');
   };
 
   const handleTransfer = () => {
@@ -226,7 +256,7 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
 
   const handleMFAVerify = () => {
     if (mfaCode === '123456' && pendingTransfer) {
-      showMsg('MFA verified', 'success');
+      showMsg('MFA verified! Processing transfer...', 'success');
       addLog('[AUTH] MFA verification successful');
       setMfaRequired(false);
       executeTransfer(pendingTransfer.from, pendingTransfer.to, pendingTransfer.amount);
@@ -236,162 +266,154 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
   };
 
   const sections = [
-    { id: 'register' as const, label: 'Register', icon: <UserPlus size={13} /> },
-    { id: 'login' as const, label: 'Login', icon: <LogIn size={13} /> },
-    { id: 'transfer' as const, label: 'Transfer', icon: <Send size={13} /> },
-    { id: 'history' as const, label: 'History', icon: <History size={13} /> },
+    { id: 'register' as const, label: 'Register', icon: <UserPlus size={14} /> },
+    { id: 'login' as const, label: 'Login', icon: <LogIn size={14} /> },
+    { id: 'transfer' as const, label: 'Transfer', icon: <Send size={14} /> },
+    { id: 'history' as const, label: 'History', icon: <History size={14} /> },
   ];
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-zinc-100 tracking-tight">Core Banking System</h2>
-          <p className="text-[12px] text-zinc-500 mt-0.5">Simulated digital banking with user management and transaction processing</p>
+          <h2 className="text-xl font-bold text-white">🟢 Phase 1 — Core Banking Simulation</h2>
+          <p className="text-sm text-gray-400 mt-1">Simulated digital banking environment with user management and transactions</p>
         </div>
         {state.currentUser && (
-          <div className="flex items-center gap-2 bg-emerald-500/5 border border-emerald-500/15 px-3 py-1.5 rounded-lg animate-fade-in-fast">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-dot-pulse" />
-            <span className="text-[11px] text-emerald-400/80 font-medium">{state.currentUser.fullName}</span>
+          <div className="flex items-center gap-2 bg-green-500/10 border border-green-500/20 px-3 py-1.5 rounded-lg">
+            <div className="w-2 h-2 rounded-full bg-green-500" />
+            <span className="text-xs text-green-400">Logged in: {state.currentUser.fullName}</span>
           </div>
         )}
       </div>
 
-      {/* Alert message */}
       {message && (
-        <div className={`px-4 py-2.5 rounded-lg text-[12px] font-medium border animate-scale-in ${
-          message.type === 'success' ? 'bg-emerald-500/5 border-emerald-500/15 text-emerald-400/90' :
-          message.type === 'error' ? 'bg-red-500/5 border-red-500/15 text-red-400/90' :
-          'bg-amber-500/5 border-amber-500/15 text-amber-400/90'
+        <div className={`p-3 rounded-lg text-sm border ${
+          message.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
+          message.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+          'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
         }`}>{message.text}</div>
       )}
 
-      {/* Section tabs */}
-      <div className="flex gap-1 bg-surface-2/50 p-1 rounded-lg border border-border-subtle w-fit">
+      <div className="flex gap-2">
         {sections.map(s => (
           <button key={s.id} onClick={() => setActiveSection(s.id)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${
-              activeSection === s.id
-                ? 'bg-surface-3 text-zinc-200 shadow-sm'
-                : 'text-zinc-500 hover:text-zinc-400'
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+              activeSection === s.id ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'
             }`}>
             {s.icon} {s.label}
           </button>
         ))}
       </div>
 
-      {/* Registration */}
       {activeSection === 'register' && (
-        <div className="glass-card rounded-xl p-5 space-y-4 animate-fade-in">
-          <h3 className="text-[13px] font-semibold text-zinc-200 flex items-center gap-2"><UserPlus size={14} className="text-accent" /> User Registration</h3>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><UserPlus size={16} /> User Registration</h3>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">Username</label>
-              <input className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600" placeholder="jdelacruz" value={registerForm.username} onChange={e => setRegisterForm(f => ({ ...f, username: e.target.value }))} />
+              <label className="text-xs text-gray-500 block mb-1">Username</label>
+              <input className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none" placeholder="e.g. jdelacruz" value={registerForm.username} onChange={e => setRegisterForm(f => ({ ...f, username: e.target.value }))} />
             </div>
             <div>
-              <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">Full Name</label>
-              <input className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600" placeholder="Juan Dela Cruz" value={registerForm.fullName} onChange={e => setRegisterForm(f => ({ ...f, fullName: e.target.value }))} />
+              <label className="text-xs text-gray-500 block mb-1">Full Name</label>
+              <input className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none" placeholder="e.g. Juan Dela Cruz" value={registerForm.fullName} onChange={e => setRegisterForm(f => ({ ...f, fullName: e.target.value }))} />
             </div>
             <div>
-              <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">Email</label>
-              <input className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600" placeholder="juan@email.com" value={registerForm.email} onChange={e => setRegisterForm(f => ({ ...f, email: e.target.value }))} />
+              <label className="text-xs text-gray-500 block mb-1">Email</label>
+              <input className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none" placeholder="e.g. juan@email.com" value={registerForm.email} onChange={e => setRegisterForm(f => ({ ...f, email: e.target.value }))} />
             </div>
             <div>
-              <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">Password</label>
+              <label className="text-xs text-gray-500 block mb-1">Password</label>
               <div className="relative">
-                <input type={showPassword ? 'text' : 'password'} className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600 pr-9" placeholder="Min 6 characters" value={registerForm.password} onChange={e => setRegisterForm(f => ({ ...f, password: e.target.value }))} />
-                <button onClick={() => setShowPassword(!showPassword)} className="absolute right-2.5 top-2 text-zinc-600 hover:text-zinc-400">
-                  {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                <input type={showPassword ? 'text' : 'password'} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none pr-10" placeholder="Min 6 characters" value={registerForm.password} onChange={e => setRegisterForm(f => ({ ...f, password: e.target.value }))} />
+                <button onClick={() => setShowPassword(!showPassword)} className="absolute right-2 top-2 text-gray-500 hover:text-gray-300">
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
             </div>
           </div>
-          <div className="bg-surface-2/60 rounded-lg px-3 py-2 text-[11px] text-zinc-500 border border-border-subtle">
-            <span className="text-zinc-400 font-medium">Security note:</span> Password hashed with simulated bcrypt. Input validated against injection.
+          <div className="bg-gray-800/50 rounded-lg p-3 text-xs text-gray-500">
+            <strong className="text-gray-400">🔐 Security:</strong> Password will be hashed using simulated bcrypt. Input is validated against injection characters.
           </div>
-          <button onClick={handleRegister} className="w-full bg-accent hover:bg-accent-muted text-white font-medium py-2 rounded-lg text-[12px] transition-all hover:shadow-lg hover:shadow-accent/10">Create Account</button>
+          <button onClick={handleRegister} className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">Create Account</button>
         </div>
       )}
 
-      {/* Login */}
       {activeSection === 'login' && (
-        <div className="glass-card rounded-xl p-5 space-y-4 animate-fade-in">
-          <h3 className="text-[13px] font-semibold text-zinc-200 flex items-center gap-2"><LogIn size={14} className="text-accent" /> User Login</h3>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><LogIn size={16} /> User Login</h3>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">Username</label>
-              <input className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600" placeholder="Username" value={loginForm.username} onChange={e => setLoginForm(f => ({ ...f, username: e.target.value }))} />
+              <label className="text-xs text-gray-500 block mb-1">Username</label>
+              <input className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none" placeholder="Username" value={loginForm.username} onChange={e => setLoginForm(f => ({ ...f, username: e.target.value }))} />
             </div>
             <div>
-              <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">Password</label>
-              <input type="password" className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600" placeholder="Password" value={loginForm.password} onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))} />
+              <label className="text-xs text-gray-500 block mb-1">Password</label>
+              <input type="password" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none" placeholder="Password" value={loginForm.password} onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))} />
             </div>
           </div>
-          <div className="bg-surface-2/60 rounded-lg px-3 py-2 text-[11px] text-zinc-500 border border-border-subtle">
-            <span className="text-zinc-400 font-medium">Test credentials:</span> jdelacruz / password123 — mreyes / securepass — rsantos / mypassword
+          <div className="bg-gray-800/50 rounded-lg p-3 text-xs text-gray-500">
+            <strong className="text-gray-400">💡 Test accounts:</strong> jdelacruz/password123 • mreyes/securepass • rsantos/mypassword
           </div>
-          <button onClick={handleLogin} className="w-full bg-accent hover:bg-accent-muted text-white font-medium py-2 rounded-lg text-[12px] transition-all hover:shadow-lg hover:shadow-accent/10">Sign In</button>
+          <button onClick={handleLogin} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">Login</button>
         </div>
       )}
 
-      {/* Transfer */}
       {activeSection === 'transfer' && (
-        <div className="glass-card rounded-xl p-5 space-y-4 animate-fade-in">
-          <h3 className="text-[13px] font-semibold text-zinc-200 flex items-center gap-2"><Send size={14} className="text-accent" /> Transfer Money</h3>
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Send size={16} /> Transfer Money</h3>
           {mfaRequired ? (
             <div className="space-y-3">
-              <div className="bg-amber-500/5 border border-amber-500/15 rounded-lg px-4 py-2.5 text-[12px] text-amber-400/90 flex items-center gap-2">
-                <Lock size={13} /> Step-up authentication required
+              <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-3 text-sm text-yellow-400">
+                <Lock size={14} className="inline mr-1" /> Step-up authentication required! Enter OTP to proceed.
               </div>
               <div>
-                <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">OTP Code <span className="text-zinc-600">(simulated: 123456)</span></label>
-                <input className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600" placeholder="6-digit OTP" value={mfaCode} onChange={e => setMfaCode(e.target.value)} />
+                <label className="text-xs text-gray-500 block mb-1">OTP Code (simulated: 123456)</label>
+                <input className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-yellow-500 focus:outline-none" placeholder="Enter 6-digit OTP" value={mfaCode} onChange={e => setMfaCode(e.target.value)} />
               </div>
               <div className="flex gap-2">
-                <button onClick={handleMFAVerify} className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-medium py-2 rounded-lg text-[12px] flex items-center justify-center gap-2"><Unlock size={13} /> Verify</button>
-                <button onClick={() => { setMfaRequired(false); setPendingTransfer(null); }} className="flex-1 bg-surface-3 text-zinc-400 font-medium py-2 rounded-lg text-[12px] border border-border-subtle hover:border-border-default">Cancel</button>
+                <button onClick={handleMFAVerify} className="flex-1 bg-yellow-600 hover:bg-yellow-700 text-white font-medium py-2 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"><Unlock size={14} /> Verify OTP</button>
+                <button onClick={() => { setMfaRequired(false); setPendingTransfer(null); }} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-medium py-2 rounded-lg text-sm transition-colors">Cancel</button>
               </div>
             </div>
           ) : (
             <>
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">From Account</label>
-                  <input className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600 font-mono" placeholder="9001234567" value={transferForm.fromAccount} onChange={e => setTransferForm(f => ({ ...f, fromAccount: e.target.value }))} />
+                  <label className="text-xs text-gray-500 block mb-1">From Account #</label>
+                  <input className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none" placeholder="Account #" value={transferForm.fromAccount} onChange={e => setTransferForm(f => ({ ...f, fromAccount: e.target.value }))} />
                 </div>
                 <div>
-                  <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">To Account</label>
-                  <input className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600 font-mono" placeholder="9009876543" value={transferForm.toAccount} onChange={e => setTransferForm(f => ({ ...f, toAccount: e.target.value }))} />
+                  <label className="text-xs text-gray-500 block mb-1">To Account #</label>
+                  <input className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none" placeholder="Account #" value={transferForm.toAccount} onChange={e => setTransferForm(f => ({ ...f, toAccount: e.target.value }))} />
                 </div>
                 <div>
-                  <label className="text-[11px] text-zinc-500 font-medium block mb-1.5">Amount (₱)</label>
-                  <input type="number" className="w-full bg-surface-2 border border-border-subtle rounded-lg px-3 py-2 text-[12px] text-zinc-200 placeholder:text-zinc-600 font-mono" placeholder="0.00" value={transferForm.amount} onChange={e => setTransferForm(f => ({ ...f, amount: e.target.value }))} />
+                  <label className="text-xs text-gray-500 block mb-1">Amount (₱)</label>
+                  <input type="number" className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:border-green-500 focus:outline-none" placeholder="0.00" value={transferForm.amount} onChange={e => setTransferForm(f => ({ ...f, amount: e.target.value }))} />
                 </div>
               </div>
-              <button onClick={handleTransfer} className="w-full bg-accent hover:bg-accent-muted text-white font-medium py-2 rounded-lg text-[12px] flex items-center justify-center gap-2 transition-all hover:shadow-lg hover:shadow-accent/10"><ArrowRight size={13} /> Send Transfer</button>
+              <button onClick={handleTransfer} className="w-full bg-green-600 hover:bg-green-700 text-white font-medium py-2 rounded-lg text-sm transition-colors">Send Transfer</button>
             </>
           )}
         </div>
       )}
 
-      {/* Accounts & Login Logs */}
+      {/* Users & Accounts Overview */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="glass-card rounded-xl p-4 animate-fade-in stagger-1">
-          <h3 className="text-[12px] font-semibold text-zinc-300 mb-3 flex items-center gap-2"><Wallet size={13} className="text-zinc-500" /> Accounts</h3>
-          <div className="space-y-1.5 max-h-56 overflow-y-auto">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><DollarSign size={14} /> Accounts</h3>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
             {state.accounts.map(acc => {
               const user = state.users.find(u => u.id === acc.userId);
               return (
-                <div key={acc.id} className={`px-3 py-2.5 rounded-lg border text-[11px] transition-all hover:border-border-default ${acc.isFrozen ? 'bg-blue-500/3 border-blue-500/15' : 'bg-surface-2/40 border-border-subtle'}`}>
+                <div key={acc.id} className={`p-2.5 rounded-lg border text-xs ${acc.isFrozen ? 'bg-blue-500/5 border-blue-500/20' : 'bg-gray-800/50 border-gray-700/50'}`}>
                   <div className="flex justify-between items-center">
-                    <span className="text-zinc-300 font-medium">{user?.fullName}</span>
-                    <span className={`font-semibold font-mono tabular-nums ${acc.isFrozen ? 'text-blue-400/80' : 'text-emerald-400/80'}`}>₱{acc.balance.toLocaleString()}</span>
+                    <span className="text-gray-300 font-medium">{user?.fullName}</span>
+                    <span className={`font-bold ${acc.isFrozen ? 'text-blue-400' : 'text-green-400'}`}>₱{acc.balance.toLocaleString()}</span>
                   </div>
-                  <div className="flex justify-between mt-1 text-zinc-600">
-                    <span className="font-mono">{acc.accountNumber}</span>
-                    <span>{acc.type}{acc.isFrozen ? ' · Frozen' : ''}</span>
+                  <div className="flex justify-between mt-1">
+                    <span className="text-gray-500">#{acc.accountNumber}</span>
+                    <span className="text-gray-500">{acc.type} {acc.isFrozen ? '🧊 FROZEN' : ''}</span>
                   </div>
                 </div>
               );
@@ -399,22 +421,22 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
           </div>
         </div>
 
-        <div className="glass-card rounded-xl p-4 animate-fade-in stagger-2">
-          <h3 className="text-[12px] font-semibold text-zinc-300 mb-3 flex items-center gap-2"><LogIn size={13} className="text-zinc-500" /> Login Activity</h3>
-          <div className="space-y-1.5 max-h-56 overflow-y-auto">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><LogIn size={14} /> Recent Login Logs</h3>
+          <div className="space-y-2 max-h-60 overflow-y-auto">
             {state.loginLogs.length === 0 ? (
-              <p className="text-[11px] text-zinc-700 text-center py-6">No login activity</p>
+              <p className="text-xs text-gray-600 text-center py-4">No login activity yet</p>
             ) : (
               state.loginLogs.slice(-10).reverse().map(log => (
-                <div key={log.id} className={`px-3 py-2.5 rounded-lg border text-[11px] ${log.success ? 'bg-surface-2/40 border-border-subtle' : log.blocked ? 'bg-red-500/3 border-red-500/10' : 'bg-amber-500/3 border-amber-500/10'}`}>
+                <div key={log.id} className={`p-2.5 rounded-lg border text-xs ${log.success ? 'bg-gray-800/50 border-gray-700/50' : log.blocked ? 'bg-red-500/5 border-red-500/20' : 'bg-yellow-500/5 border-yellow-500/20'}`}>
                   <div className="flex justify-between">
-                    <span className="text-zinc-300 font-medium">{log.username}</span>
-                    <span className={`font-medium ${log.success ? 'text-emerald-400/70' : log.blocked ? 'text-red-400/70' : 'text-amber-400/70'}`}>
-                      {log.success ? 'Success' : log.blocked ? 'Blocked' : 'Failed'}
+                    <span className="text-gray-300">{log.username}</span>
+                    <span className={log.success ? 'text-green-400' : log.blocked ? 'text-red-400' : 'text-yellow-400'}>
+                      {log.success ? '✓ Success' : log.blocked ? '✕ Blocked' : '✕ Failed'}
                     </span>
                   </div>
-                  <div className="text-zinc-600 mt-0.5 font-mono">{log.ip} · {log.device}</div>
-                  {log.reason && <div className="text-red-400/60 mt-0.5">{log.reason}</div>}
+                  <div className="text-gray-500 mt-1">{log.ip} • {log.device} • {log.geoLocation}</div>
+                  {log.reason && <div className="text-red-400 mt-1">⚠ {log.reason}</div>}
                 </div>
               ))
             )}
@@ -422,47 +444,47 @@ export function CoreBanking({ state, setState }: CoreBankingProps) {
         </div>
       </div>
 
-      {/* Transaction History */}
       {activeSection === 'history' && (
-        <div className="glass-card rounded-xl p-4 animate-fade-in">
-          <h3 className="text-[12px] font-semibold text-zinc-300 mb-3 flex items-center gap-2"><History size={13} className="text-zinc-500" /> Transaction History</h3>
-          <div className="space-y-1.5 max-h-80 overflow-y-auto">
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><History size={14} /> Transaction History</h3>
+          <div className="space-y-2 max-h-96 overflow-y-auto">
             {state.transactions.length === 0 ? (
-              <p className="text-[11px] text-zinc-700 text-center py-6">No transactions yet</p>
+              <p className="text-xs text-gray-600 text-center py-4">No transactions yet</p>
             ) : (
               state.transactions.slice().reverse().map(tx => {
                 const fromUser = state.users.find(u => u.id === tx.fromUserId);
                 const toUser = state.users.find(u => u.id === tx.toUserId);
                 return (
-                  <div key={tx.id} className={`px-3 py-3 rounded-lg border text-[11px] ${
-                    tx.status === 'blocked' ? 'bg-red-500/3 border-red-500/10' :
-                    tx.status === 'flagged' ? 'bg-amber-500/3 border-amber-500/10' :
-                    'bg-surface-2/40 border-border-subtle'
+                  <div key={tx.id} className={`p-3 rounded-lg border text-xs ${
+                    tx.status === 'blocked' ? 'bg-red-500/5 border-red-500/20' :
+                    tx.status === 'flagged' ? 'bg-yellow-500/5 border-yellow-500/20' :
+                    'bg-gray-800/50 border-gray-700/50'
                   }`}>
                     <div className="flex justify-between items-center">
-                      <span className="text-zinc-300">{fromUser?.fullName} <ArrowRight size={10} className="inline mx-1 text-zinc-600" /> {toUser?.fullName}</span>
-                      <span className="font-semibold text-zinc-200 font-mono tabular-nums">₱{tx.amount.toLocaleString()}</span>
+                      <span className="text-gray-300">{fromUser?.fullName} → {toUser?.fullName}</span>
+                      <span className="font-bold text-white">₱{tx.amount.toLocaleString()}</span>
                     </div>
-                    <div className="flex items-center justify-between mt-1.5">
-                      <span className="text-zinc-600">{new Date(tx.timestamp).toLocaleString()}</span>
-                      <div className="flex items-center gap-2">
-                        {tx.riskScore > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-16 bg-surface-2 rounded-full h-1">
-                              <div className={`h-1 rounded-full risk-bar ${tx.riskScore >= 70 ? 'bg-red-500/80' : tx.riskScore >= 40 ? 'bg-amber-500/80' : 'bg-emerald-500/80'}`} style={{ width: `${tx.riskScore}%` }} />
-                            </div>
-                            <span className={`text-[10px] font-mono tabular-nums ${tx.riskScore >= 70 ? 'text-red-400/60' : tx.riskScore >= 40 ? 'text-amber-400/60' : 'text-emerald-400/60'}`}>{tx.riskScore}</span>
-                          </div>
-                        )}
-                        <span className={`text-[10px] font-medium uppercase tracking-wider ${
-                          tx.status === 'blocked' ? 'text-red-400/70' : tx.status === 'flagged' ? 'text-amber-400/70' : 'text-emerald-400/70'
-                        }`}>{tx.status}</span>
+                    <div className="flex justify-between mt-1">
+                      <span className="text-gray-500">{new Date(tx.timestamp).toLocaleString()}</span>
+                      <span className={
+                        tx.status === 'blocked' ? 'text-red-400' :
+                        tx.status === 'flagged' ? 'text-yellow-400' :
+                        'text-green-400'
+                      }>{tx.status.toUpperCase()}</span>
+                    </div>
+                    {tx.riskScore > 0 && (
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="text-gray-500">Risk: </span>
+                        <div className="flex-1 bg-gray-800 rounded-full h-1.5">
+                          <div className={`h-1.5 rounded-full ${tx.riskScore >= 70 ? 'bg-red-500' : tx.riskScore >= 40 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${tx.riskScore}%` }} />
+                        </div>
+                        <span className={`${tx.riskScore >= 70 ? 'text-red-400' : tx.riskScore >= 40 ? 'text-yellow-400' : 'text-green-400'}`}>{tx.riskScore}</span>
                       </div>
-                    </div>
+                    )}
                     {tx.fraudReasons.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1.5">
+                      <div className="mt-1 flex flex-wrap gap-1">
                         {tx.fraudReasons.map((r, i) => (
-                          <span key={i} className="bg-amber-500/5 text-amber-400/60 px-1.5 py-0.5 rounded text-[10px] border border-amber-500/10">{r}</span>
+                          <span key={i} className="bg-yellow-500/10 text-yellow-400 px-1.5 py-0.5 rounded text-[10px]">{r}</span>
                         ))}
                       </div>
                     )}

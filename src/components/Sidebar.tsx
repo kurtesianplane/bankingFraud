@@ -35,9 +35,9 @@ export function Sidebar({ activeTab, onTabChange, alertCount }: SidebarProps) {
           </div>
         </div>
       </div>
-      
-      {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 space-y-0.5">
+
+      {/* Navigation (scrollable) */}
+      <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
         <p className="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest px-2.5 mb-3">Modules</p>
         {tabs.map((tab, i) => (
           <button
@@ -69,22 +69,25 @@ export function Sidebar({ activeTab, onTabChange, alertCount }: SidebarProps) {
           </button>
         ))}
       </nav>
-      
-      {/* Status */}
-      <div className="px-4 py-4 border-t border-border-subtle">
-        <div className="px-2.5 py-2 rounded-lg bg-surface-2/60 border border-border-subtle">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-dot-pulse" />
-            <span className="text-[11px] text-zinc-500 font-medium">Sandbox Active</span>
+
+      {/* Sticky bottom section */}
+      <div className="sticky bottom-0 z-10 bg-surface-1">
+        {/* Status */}
+        <div className="px-4 py-4 border-t border-border-subtle">
+          <div className="px-2.5 py-2 rounded-lg bg-surface-2/60 border border-border-subtle">
+            <div className="flex items-center gap-2">
+              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-dot-pulse" />
+              <span className="text-[11px] text-zinc-500 font-medium">Sandbox Active</span>
+            </div>
           </div>
         </div>
-      </div>
         {/* Creator Info */}
-        <div className="px-4 pb-4 mt-auto">
+        <div className="px-4 pb-4">
           <div className="text-[11px] text-zinc-500 font-medium text-center">
             created by <a href="https://kurtesianplane.github.io/" target="_blank" rel="noopener noreferrer" className="underline text-accent">kurtesianplane</a>
           </div>
         </div>
+      </div>
     </div>
   );
 }
