@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { StoreState, generateId } from '../store';
 import { ComplianceReport } from '../types';
-import { FileText, ShieldCheck, AlertTriangle, Clock, CheckCircle, Send, Download, BarChart2, Scale, FileWarning, FilePlus, Briefcase } from 'lucide-react';
+import { FileText, ShieldCheck, AlertTriangle, Clock, CheckCircle, Send, Download, BarChart2, Scale, FileWarning, FilePlus } from 'lucide-react';
 
 interface ComplianceProps {
   state: StoreState;
@@ -15,143 +15,70 @@ export function Compliance({ state, setState }: ComplianceProps) {
   const flaggedTxs = state.transactions.filter(t => t.isFlagged);
   const blockedTxs = state.transactions.filter(t => t.status === 'blocked');
   const amlPatterns = state.transactions.filter(t => t.attackScenario?.includes('Money Laundering'));
-  const unreportedAlerts = state.fraudAlerts.filter(a => a.severity === 'critical' || a.severity === 'high')
-    .filter(a => !state.complianceReports.some(r => r.relatedAlerts.includes(a.id)));
+  const unreportedAlerts = state.fraudAlerts.filter(a => a.severity === 'critical' || a.severity === 'high').filter(a => !state.complianceReports.some(r => r.relatedAlerts.includes(a.id)));
 
   const generateSAR = () => {
     const relatedTxs = selectedTxIds.length > 0 ? selectedTxIds : flaggedTxs.slice(0, 5).map(t => t.id);
-    const relatedAlertIds = state.fraudAlerts
-      .filter(a => relatedTxs.some(txId => a.transactionId === txId))
-      .map(a => a.id);
-
-    const totalAmount = state.transactions
-      .filter(t => relatedTxs.includes(t.id))
-      .reduce((sum, t) => sum + t.amount, 0);
-
-    const report: ComplianceReport = {
-      id: generateId(),
-      type: 'SAR',
-      title: `SAR - Suspicious Activity Report #${state.complianceReports.filter(r => r.type === 'SAR').length + 1}`,
-      generatedAt: Date.now(),
-      status: 'draft',
-      relatedTransactions: relatedTxs,
-      relatedAlerts: relatedAlertIds,
-      summary: `Suspicious activity detected involving ${relatedTxs.length} transaction(s) totaling ₱${totalAmount.toLocaleString()}. ` +
-        `${amlPatterns.length > 0 ? `Potential money laundering patterns identified (smurfing/layering). ` : ''}` +
-        `${relatedAlertIds.length} fraud alert(s) generated. Recommend investigation and filing with AMLC within 5 business days.`,
-      regulatoryBody: 'AMLC (Anti-Money Laundering Council)',
-      dueDate: Date.now() + 5 * 86400000,
-      filedBy: 'Compliance Officer'
-    };
-
-    setState(prev => ({
-      ...prev,
-      complianceReports: [...prev.complianceReports, report],
-      eventLog: [...prev.eventLog, `[${new Date().toLocaleTimeString()}] [COMPLIANCE] SAR generated: ${report.title} (${relatedTxs.length} txs, ₱${totalAmount.toLocaleString()})`]
-    }));
+    const relatedAlertIds = state.fraudAlerts.filter(a => relatedTxs.some(txId => a.transactionId === txId)).map(a => a.id);
+    const totalAmount = state.transactions.filter(t => relatedTxs.includes(t.id)).reduce((sum, t) => sum + t.amount, 0);
+    const report: ComplianceReport = { id: generateId(), type: 'SAR', title: `SAR #${state.complianceReports.filter(r => r.type === 'SAR').length + 1}`, generatedAt: Date.now(), status: 'draft', relatedTransactions: relatedTxs, relatedAlerts: relatedAlertIds, summary: `${relatedTxs.length} suspicious transaction(s) totaling ₱${totalAmount.toLocaleString()}.${amlPatterns.length > 0 ? ' Potential money laundering detected.' : ''} ${relatedAlertIds.length} alert(s). Filing recommended within 5 business days.`, regulatoryBody: 'AMLC', dueDate: Date.now() + 5 * 86400000, filedBy: 'Compliance Officer' };
+    setState(prev => ({ ...prev, complianceReports: [...prev.complianceReports, report], eventLog: [...prev.eventLog, `[${new Date().toLocaleTimeString()}] [COMPLIANCE] SAR generated (${relatedTxs.length} txs, ₱${totalAmount.toLocaleString()})`] }));
     setSelectedTxIds([]);
   };
 
   const generateCTR = () => {
     const largeTxs = state.transactions.filter(t => t.amount > 50000);
-    const report: ComplianceReport = {
-      id: generateId(),
-      type: 'CTR',
-      title: `CTR - Currency Transaction Report #${state.complianceReports.filter(r => r.type === 'CTR').length + 1}`,
-      generatedAt: Date.now(),
-      status: 'draft',
-      relatedTransactions: largeTxs.map(t => t.id),
-      relatedAlerts: [],
-      summary: `${largeTxs.length} transaction(s) exceeding ₱50,000 threshold. Mandatory reporting to BSP per Circular 706 and RA 9160 (AMLA).`,
-      regulatoryBody: 'BSP (Bangko Sentral ng Pilipinas)',
-      dueDate: Date.now() + 10 * 86400000,
-      filedBy: 'Compliance Officer'
-    };
-
-    setState(prev => ({
-      ...prev,
-      complianceReports: [...prev.complianceReports, report],
-      eventLog: [...prev.eventLog, `[${new Date().toLocaleTimeString()}] [COMPLIANCE] CTR generated: ${report.title} (${largeTxs.length} large transactions)`]
-    }));
+    const report: ComplianceReport = { id: generateId(), type: 'CTR', title: `CTR #${state.complianceReports.filter(r => r.type === 'CTR').length + 1}`, generatedAt: Date.now(), status: 'draft', relatedTransactions: largeTxs.map(t => t.id), relatedAlerts: [], summary: `${largeTxs.length} transaction(s) exceeding ₱50,000. Mandatory BSP Circular 706 / RA 9160 filing.`, regulatoryBody: 'BSP', dueDate: Date.now() + 10 * 86400000, filedBy: 'Compliance Officer' };
+    setState(prev => ({ ...prev, complianceReports: [...prev.complianceReports, report], eventLog: [...prev.eventLog, `[${new Date().toLocaleTimeString()}] [COMPLIANCE] CTR generated (${largeTxs.length} txs)`] }));
   };
 
   const generateAuditReport = () => {
-    const report: ComplianceReport = {
-      id: generateId(),
-      type: 'audit',
-      title: `Audit Report - System Security Assessment #${state.complianceReports.filter(r => r.type === 'audit').length + 1}`,
-      generatedAt: Date.now(),
-      status: 'draft',
-      relatedTransactions: [],
-      relatedAlerts: state.fraudAlerts.map(a => a.id),
-      summary: `Security audit summary: ${state.users.length} users, ${state.transactions.length} transactions processed, ` +
-        `${flaggedTxs.length} flagged (${((flaggedTxs.length / Math.max(state.transactions.length, 1)) * 100).toFixed(1)}% flag rate), ` +
-        `${blockedTxs.length} blocked. ${state.securityControls.filter(c => c.enabled).length}/${state.securityControls.length} security controls active. ` +
-        `${state.fraudAlerts.filter(a => a.status === 'resolved').length} alerts resolved. ` +
-        `${state.users.filter(u => u.isLocked).length} accounts currently locked.`,
-      regulatoryBody: 'Internal Audit / BSP',
-      dueDate: Date.now() + 30 * 86400000,
-      filedBy: 'Internal Auditor'
-    };
-
-    setState(prev => ({
-      ...prev,
-      complianceReports: [...prev.complianceReports, report],
-      eventLog: [...prev.eventLog, `[${new Date().toLocaleTimeString()}] [COMPLIANCE] Audit report generated`]
-    }));
+    const report: ComplianceReport = { id: generateId(), type: 'audit', title: `Audit #${state.complianceReports.filter(r => r.type === 'audit').length + 1}`, generatedAt: Date.now(), status: 'draft', relatedTransactions: [], relatedAlerts: state.fraudAlerts.map(a => a.id), summary: `${state.users.length} users, ${state.transactions.length} txns, ${flaggedTxs.length} flagged (${((flaggedTxs.length / Math.max(state.transactions.length, 1)) * 100).toFixed(1)}%), ${blockedTxs.length} blocked. ${state.securityControls.filter(c => c.enabled).length}/${state.securityControls.length} controls active.`, regulatoryBody: 'Internal / BSP', dueDate: Date.now() + 30 * 86400000, filedBy: 'Internal Auditor' };
+    setState(prev => ({ ...prev, complianceReports: [...prev.complianceReports, report], eventLog: [...prev.eventLog, `[${new Date().toLocaleTimeString()}] [COMPLIANCE] Audit report generated`] }));
   };
 
   const submitReport = (reportId: string) => {
-    setState(prev => ({
-      ...prev,
-      complianceReports: prev.complianceReports.map(r => r.id === reportId ? { ...r, status: 'submitted' as const } : r),
-      eventLog: [...prev.eventLog, `[${new Date().toLocaleTimeString()}] [COMPLIANCE] Report submitted: ${prev.complianceReports.find(r => r.id === reportId)?.title}`]
-    }));
+    setState(prev => ({ ...prev, complianceReports: prev.complianceReports.map(r => r.id === reportId ? { ...r, status: 'submitted' as const } : r), eventLog: [...prev.eventLog, `[${new Date().toLocaleTimeString()}] [COMPLIANCE] Report submitted`] }));
   };
 
-  // Compliance score calculation
   const complianceChecks = [
     { name: 'SAR Filing', met: state.complianceReports.filter(r => r.type === 'SAR').length > 0 || flaggedTxs.length === 0, desc: 'SARs filed for suspicious activity' },
-    { name: 'CTR Filing', met: state.complianceReports.filter(r => r.type === 'CTR').length > 0 || state.transactions.filter(t => t.amount > 50000).length === 0, desc: 'CTRs filed for large transactions' },
+    { name: 'CTR Filing', met: state.complianceReports.filter(r => r.type === 'CTR').length > 0 || state.transactions.filter(t => t.amount > 50000).length === 0, desc: 'CTRs for large transactions' },
     { name: 'AML Controls', met: state.securityControls.filter(c => c.category === 'transaction_limit').some(c => c.enabled), desc: 'Transaction limits enabled' },
-    { name: 'KYC Verification', met: state.users.length > 0, desc: 'User identity verification process' },
-    { name: 'Fraud Detection', met: state.securityControls.filter(c => c.enabled).length >= 4, desc: '4+ security controls active' },
-    { name: 'Incident Response', met: state.fraudAlerts.filter(a => a.status === 'resolved').length > 0 || state.fraudAlerts.length === 0, desc: 'Alerts being reviewed/resolved' },
-    { name: 'Audit Trail', met: state.eventLog.length > 5, desc: 'Comprehensive activity logging' },
-    { name: 'Account Security', met: state.securityControls.filter(c => c.category === 'lockout' || c.category === 'mfa').every(c => c.enabled), desc: 'Lockout and MFA controls active' },
+    { name: 'KYC Verification', met: state.users.length > 0, desc: 'Identity verification active' },
+    { name: 'Fraud Detection', met: state.securityControls.filter(c => c.enabled).length >= 4, desc: '4+ security controls' },
+    { name: 'Incident Response', met: state.fraudAlerts.filter(a => a.status === 'resolved').length > 0 || state.fraudAlerts.length === 0, desc: 'Alerts reviewed' },
+    { name: 'Audit Trail', met: state.eventLog.length > 5, desc: 'Activity logging' },
+    { name: 'Account Security', met: state.securityControls.filter(c => c.category === 'lockout' || c.category === 'mfa').every(c => c.enabled), desc: 'Lockout + MFA active' },
   ];
 
   const complianceScore = Math.round((complianceChecks.filter(c => c.met).length / complianceChecks.length) * 100);
 
-  const reportTypeColor = (type: string) => {
-    switch (type) { case 'SAR': return 'bg-red-500/10 text-red-400 border-red-500/20'; case 'CTR': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'; case 'STR': return 'bg-orange-500/10 text-orange-400 border-orange-500/20'; default: return 'bg-blue-500/10 text-blue-400 border-blue-500/20'; }
-  };
+  const reportBadge = (type: string) => { switch (type) { case 'SAR': return 'bg-red-500/8 text-red-400/70 border-red-500/15'; case 'CTR': return 'bg-amber-500/8 text-amber-400/70 border-amber-500/15'; default: return 'bg-blue-500/8 text-blue-400/70 border-blue-500/15'; } };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold text-white">⚪ Phase 8 — Compliance & Regulatory Reporting</h2>
-        <p className="text-sm text-gray-400 mt-1">BSP/AMLC regulatory compliance, SAR/CTR generation, and audit management</p>
+        <h2 className="text-lg font-semibold text-zinc-100 tracking-tight">Compliance & Reporting</h2>
+        <p className="text-[12px] text-zinc-500 mt-0.5">Regulatory compliance, SAR/CTR filing, and audit management</p>
       </div>
 
-      {/* Compliance Score */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-        <div className="flex items-center gap-6">
-          <div className="text-center">
-            <div className={`text-4xl font-bold ${complianceScore >= 80 ? 'text-green-400' : complianceScore >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
-              {complianceScore}%
-            </div>
-            <div className="text-[10px] text-gray-500 uppercase mt-1">Compliance Score</div>
+      {/* Score */}
+      <div className="glass-card rounded-xl p-5 animate-fade-in">
+        <div className="flex items-center gap-5">
+          <div className="text-center min-w-[64px]">
+            <div className={`text-3xl font-bold tracking-tight ${complianceScore >= 80 ? 'text-emerald-400/80' : complianceScore >= 50 ? 'text-amber-400/80' : 'text-red-400/80'}`}>{complianceScore}%</div>
+            <div className="text-[9px] text-zinc-600 uppercase tracking-widest mt-1 font-medium">Score</div>
           </div>
           <div className="flex-1">
-            <div className="bg-gray-800 rounded-full h-4">
-              <div className={`h-4 rounded-full transition-all ${complianceScore >= 80 ? 'bg-green-500' : complianceScore >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`} style={{ width: `${complianceScore}%` }} />
+            <div className="bg-surface-2 rounded-full h-2 overflow-hidden">
+              <div className={`h-2 rounded-full transition-all duration-700 ${complianceScore >= 80 ? 'bg-emerald-500/60' : complianceScore >= 50 ? 'bg-amber-500/60' : 'bg-red-500/60'}`} style={{ width: `${complianceScore}%` }} />
             </div>
-            <div className="grid grid-cols-4 gap-2 mt-2">
+            <div className="grid grid-cols-4 gap-2 mt-2.5">
               {complianceChecks.map((check, i) => (
                 <div key={i} className="flex items-center gap-1.5 text-[10px]">
-                  {check.met ? <CheckCircle size={10} className="text-green-400" /> : <AlertTriangle size={10} className="text-red-400" />}
-                  <span className={check.met ? 'text-gray-400' : 'text-red-400'}>{check.name}</span>
+                  {check.met ? <CheckCircle size={10} className="text-emerald-400/60 flex-shrink-0" /> : <AlertTriangle size={10} className="text-red-400/60 flex-shrink-0" />}
+                  <span className={check.met ? 'text-zinc-500' : 'text-red-400/70'}>{check.name}</span>
                 </div>
               ))}
             </div>
@@ -159,81 +86,70 @@ export function Compliance({ state, setState }: ComplianceProps) {
         </div>
       </div>
 
-      {/* View Tabs */}
-      <div className="flex gap-2">
+      {/* Tabs */}
+      <div className="flex gap-1 bg-surface-2/50 p-1 rounded-lg border border-border-subtle w-fit">
         {([
-          { id: 'overview' as const, label: 'Overview', icon: <BarChart2 size={13} /> },
-          { id: 'sar' as const, label: 'SAR/CTR Filing', icon: <FileWarning size={13} /> },
-          { id: 'reports' as const, label: 'Reports', icon: <FileText size={13} /> },
-          { id: 'audit' as const, label: 'Regulatory', icon: <Scale size={13} /> },
+          { id: 'overview' as const, label: 'Overview', icon: <BarChart2 size={12} /> },
+          { id: 'sar' as const, label: 'SAR/CTR Filing', icon: <FileWarning size={12} /> },
+          { id: 'reports' as const, label: 'Reports', icon: <FileText size={12} /> },
+          { id: 'audit' as const, label: 'Regulatory', icon: <Scale size={12} /> },
         ]).map(v => (
-          <button key={v.id} onClick={() => setActiveView(v.id)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeView === v.id ? 'bg-teal-500/20 text-teal-400 border border-teal-500/30' : 'bg-gray-800 text-gray-400 border border-gray-700 hover:border-gray-600'}`}>
+          <button key={v.id} onClick={() => setActiveView(v.id)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium transition-all ${activeView === v.id ? 'bg-surface-3 text-zinc-200 shadow-sm' : 'text-zinc-500 hover:text-zinc-400'}`}>
             {v.icon} {v.label}
           </button>
         ))}
       </div>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-5 gap-3">
+      {/* Stats */}
+      <div className="grid grid-cols-5 gap-2.5">
         {[
-          { label: 'Reports Filed', value: state.complianceReports.length, color: 'text-white', icon: <FileText size={16} /> },
-          { label: 'SARs', value: state.complianceReports.filter(r => r.type === 'SAR').length, color: 'text-red-400', icon: <FileWarning size={16} /> },
-          { label: 'CTRs', value: state.complianceReports.filter(r => r.type === 'CTR').length, color: 'text-yellow-400', icon: <FilePlus size={16} /> },
-          { label: 'Unreported Alerts', value: unreportedAlerts.length, color: unreportedAlerts.length > 0 ? 'text-red-400' : 'text-green-400', icon: <AlertTriangle size={16} /> },
-          { label: 'Submitted', value: state.complianceReports.filter(r => r.status === 'submitted').length, color: 'text-green-400', icon: <Send size={16} /> },
+          { label: 'Reports', value: state.complianceReports.length, icon: <FileText size={14} />, color: 'text-zinc-200' },
+          { label: 'SARs', value: state.complianceReports.filter(r => r.type === 'SAR').length, icon: <FileWarning size={14} />, color: 'text-red-400/80' },
+          { label: 'CTRs', value: state.complianceReports.filter(r => r.type === 'CTR').length, icon: <FilePlus size={14} />, color: 'text-amber-400/80' },
+          { label: 'Unreported', value: unreportedAlerts.length, icon: <AlertTriangle size={14} />, color: unreportedAlerts.length > 0 ? 'text-red-400/80' : 'text-emerald-400/80' },
+          { label: 'Submitted', value: state.complianceReports.filter(r => r.status === 'submitted').length, icon: <Send size={14} />, color: 'text-emerald-400/80' },
         ].map((s, i) => (
-          <div key={i} className="bg-gray-900 border border-gray-800 rounded-xl p-3 text-center">
-            <div className={`flex items-center justify-center gap-2 ${s.color} mb-1`}>{s.icon}<span className="text-xl font-bold">{s.value}</span></div>
-            <div className="text-[10px] text-gray-500 uppercase">{s.label}</div>
+          <div key={i} className="glass-card rounded-xl p-3 text-center stat-card animate-fade-in">
+            <div className={`flex items-center justify-center gap-1.5 ${s.color} mb-1`}>{s.icon}<span className="text-lg font-bold">{s.value}</span></div>
+            <div className="text-[9px] text-zinc-600 font-medium uppercase tracking-widest">{s.label}</div>
           </div>
         ))}
       </div>
 
       {/* Overview */}
       {activeView === 'overview' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Scale size={14} /> Regulatory Framework</h3>
-              <div className="space-y-2">
-                {[
-                  { reg: 'RA 9160 (AMLA)', desc: 'Anti-Money Laundering Act — mandate to report suspicious transactions', status: 'Active' },
-                  { reg: 'BSP Circular 706', desc: 'Enhanced AML guidelines for banks — CTR threshold at ₱500,000', status: 'Active' },
-                  { reg: 'BSP Circular 1108', desc: 'IT Risk Management framework for supervised institutions', status: 'Active' },
-                  { reg: 'RA 10175 (Cybercrime)', desc: 'Cybercrime Prevention Act — computer fraud and identity theft', status: 'Active' },
-                  { reg: 'AMLC Resolution', desc: 'Freeze order and civil forfeiture proceedings for laundered assets', status: 'Applicable' },
-                ].map((r, i) => (
-                  <div key={i} className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-2.5 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="text-teal-400 font-medium">{r.reg}</span>
-                      <span className="text-green-400 text-[10px]">{r.status}</span>
-                    </div>
-                    <div className="text-gray-500 mt-0.5">{r.desc}</div>
-                  </div>
-                ))}
-              </div>
+        <div className="grid grid-cols-2 gap-3 animate-fade-in">
+          <div className="glass-card rounded-xl p-5">
+            <h3 className="text-[13px] font-semibold text-zinc-200 mb-3 flex items-center gap-2"><Scale size={13} className="text-zinc-500" /> Regulatory Framework</h3>
+            <div className="space-y-1.5">
+              {[
+                { reg: 'RA 9160 (AMLA)', desc: 'Anti-Money Laundering mandate' },
+                { reg: 'BSP Circular 706', desc: 'Enhanced AML guidelines' },
+                { reg: 'BSP Circular 1108', desc: 'IT Risk Management framework' },
+                { reg: 'RA 10175', desc: 'Cybercrime Prevention Act' },
+              ].map((r, i) => (
+                <div key={i} className="bg-surface-2/30 border border-border-subtle rounded-lg px-3 py-2 text-[11px]">
+                  <span className="text-teal-400/60 font-medium">{r.reg}</span>
+                  <span className="text-zinc-600 ml-2">{r.desc}</span>
+                </div>
+              ))}
             </div>
-
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Briefcase size={14} /> Compliance Obligations</h3>
-              <div className="space-y-2">
-                {[
-                  { task: 'File SAR for suspicious activity', deadline: '5 business days', priority: 'critical', done: state.complianceReports.some(r => r.type === 'SAR') || flaggedTxs.length === 0 },
-                  { task: 'File CTR for transactions >₱500K', deadline: '5 business days', priority: 'high', done: state.complianceReports.some(r => r.type === 'CTR') },
-                  { task: 'Quarterly audit report', deadline: '30 days', priority: 'medium', done: state.complianceReports.some(r => r.type === 'audit') },
-                  { task: 'Review frozen accounts', deadline: 'Ongoing', priority: 'high', done: !state.accounts.some(a => a.isFrozen) },
-                  { task: 'Update threat intelligence', deadline: 'Weekly', priority: 'medium', done: state.threatIntel.length > 0 },
-                ].map((t, i) => (
-                  <div key={i} className={`flex items-center gap-3 p-2.5 rounded-lg border text-xs ${t.done ? 'bg-green-500/5 border-green-500/20' : 'bg-gray-800/50 border-gray-700/50'}`}>
-                    {t.done ? <CheckCircle size={14} className="text-green-400" /> : <Clock size={14} className="text-yellow-400" />}
-                    <div className="flex-1">
-                      <div className={t.done ? 'text-gray-400' : 'text-white'}>{t.task}</div>
-                      <div className="text-gray-500 text-[10px]">Deadline: {t.deadline}</div>
-                    </div>
-                    <span className={`px-1.5 py-0.5 rounded text-[10px] border ${t.priority === 'critical' ? 'bg-red-500/10 text-red-400 border-red-500/20' : t.priority === 'high' ? 'bg-orange-500/10 text-orange-400 border-orange-500/20' : 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'}`}>{t.priority}</span>
-                  </div>
-                ))}
-              </div>
+          </div>
+          <div className="glass-card rounded-xl p-5">
+            <h3 className="text-[13px] font-semibold text-zinc-200 mb-3 flex items-center gap-2"><Clock size={13} className="text-zinc-500" /> Obligations</h3>
+            <div className="space-y-1.5">
+              {[
+                { task: 'File SAR for suspicious activity', deadline: '5 days', done: state.complianceReports.some(r => r.type === 'SAR') || flaggedTxs.length === 0 },
+                { task: 'File CTR for txns >₱500K', deadline: '5 days', done: state.complianceReports.some(r => r.type === 'CTR') },
+                { task: 'Quarterly audit report', deadline: '30 days', done: state.complianceReports.some(r => r.type === 'audit') },
+                { task: 'Review frozen accounts', deadline: 'Ongoing', done: !state.accounts.some(a => a.isFrozen) },
+              ].map((t, i) => (
+                <div key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border text-[11px] ${t.done ? 'bg-emerald-500/2 border-emerald-500/10' : 'bg-surface-2/30 border-border-subtle'}`}>
+                  {t.done ? <CheckCircle size={12} className="text-emerald-400/60 flex-shrink-0" /> : <Clock size={12} className="text-amber-400/60 flex-shrink-0" />}
+                  <div className="flex-1"><span className={t.done ? 'text-zinc-500' : 'text-zinc-300'}>{t.task}</span></div>
+                  <span className="text-[10px] text-zinc-600 font-mono">{t.deadline}</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -241,91 +157,73 @@ export function Compliance({ state, setState }: ComplianceProps) {
 
       {/* SAR/CTR Filing */}
       {activeView === 'sar' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-4">
-            <div className="bg-gray-900 border border-red-500/20 rounded-xl p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2"><FileWarning size={14} className="text-red-400" /> Generate SAR</h3>
-              <p className="text-xs text-gray-500">Suspicious Activity Report — filed when fraud or money laundering is detected</p>
-              {flaggedTxs.length > 0 && (
-                <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                  {flaggedTxs.slice(0, 8).map(tx => (
-                    <label key={tx.id} className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer">
-                      <input type="checkbox" className="accent-red-500" checked={selectedTxIds.includes(tx.id)} onChange={e => {
-                        if (e.target.checked) setSelectedTxIds(prev => [...prev, tx.id]);
-                        else setSelectedTxIds(prev => prev.filter(id => id !== tx.id));
-                      }} />
-                      ₱{tx.amount.toLocaleString()} • Risk: {tx.riskScore}
-                      <span className="text-gray-500 text-[10px]">{tx.id.substring(0, 10)}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              <button onClick={generateSAR} disabled={flaggedTxs.length === 0} className="w-full bg-red-600/20 text-red-400 border border-red-500/30 py-2 rounded-lg text-xs hover:bg-red-600/30 disabled:opacity-30 disabled:cursor-not-allowed">
-                Generate SAR
-              </button>
-            </div>
-
-            <div className="bg-gray-900 border border-yellow-500/20 rounded-xl p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2"><FilePlus size={14} className="text-yellow-400" /> Generate CTR</h3>
-              <p className="text-xs text-gray-500">Currency Transaction Report — mandatory for transactions exceeding ₱50,000 threshold</p>
-              <div className="bg-gray-800/50 rounded-lg p-2 text-xs text-gray-400">
-                <span className="text-yellow-400">{state.transactions.filter(t => t.amount > 50000).length}</span> transaction(s) exceed threshold
+        <div className="grid grid-cols-3 gap-3 animate-fade-in">
+          <div className="glass-card rounded-xl p-4 space-y-3">
+            <h3 className="text-[12px] font-semibold text-zinc-200 flex items-center gap-2"><FileWarning size={13} className="text-red-400/60" /> Generate SAR</h3>
+            <p className="text-[10px] text-zinc-600">Suspicious Activity Report</p>
+            {flaggedTxs.length > 0 && (
+              <div className="space-y-1 max-h-28 overflow-y-auto">
+                {flaggedTxs.slice(0, 8).map(tx => (
+                  <label key={tx.id} className="flex items-center gap-2 text-[11px] text-zinc-400 cursor-pointer">
+                    <input type="checkbox" className="accent-red-500 rounded" checked={selectedTxIds.includes(tx.id)} onChange={e => { if (e.target.checked) setSelectedTxIds(prev => [...prev, tx.id]); else setSelectedTxIds(prev => prev.filter(id => id !== tx.id)); }} />
+                    ₱{tx.amount.toLocaleString()} · Risk {tx.riskScore}
+                  </label>
+                ))}
               </div>
-              <button onClick={generateCTR} disabled={state.transactions.filter(t => t.amount > 50000).length === 0} className="w-full bg-yellow-600/20 text-yellow-400 border border-yellow-500/30 py-2 rounded-lg text-xs hover:bg-yellow-600/30 disabled:opacity-30 disabled:cursor-not-allowed">
-                Generate CTR
-              </button>
+            )}
+            <button onClick={generateSAR} disabled={flaggedTxs.length === 0} className="w-full bg-red-500/8 text-red-400/70 border border-red-500/15 py-2 rounded-lg text-[11px] font-medium hover:bg-red-500/12 disabled:opacity-20 disabled:cursor-not-allowed">Generate SAR</button>
+          </div>
+          <div className="glass-card rounded-xl p-4 space-y-3">
+            <h3 className="text-[12px] font-semibold text-zinc-200 flex items-center gap-2"><FilePlus size={13} className="text-amber-400/60" /> Generate CTR</h3>
+            <p className="text-[10px] text-zinc-600">Currency Transaction Report</p>
+            <div className="bg-surface-2/40 rounded-lg p-2 text-[11px] text-zinc-500 border border-border-subtle">
+              <span className="text-amber-400/70 font-semibold">{state.transactions.filter(t => t.amount > 50000).length}</span> txns exceed threshold
             </div>
-
-            <div className="bg-gray-900 border border-blue-500/20 rounded-xl p-4 space-y-3">
-              <h3 className="text-sm font-semibold text-white flex items-center gap-2"><ShieldCheck size={14} className="text-blue-400" /> Generate Audit Report</h3>
-              <p className="text-xs text-gray-500">Comprehensive system security and compliance audit report</p>
-              <div className="bg-gray-800/50 rounded-lg p-2 text-xs text-gray-400">
-                <span className="text-blue-400">{state.securityControls.filter(c => c.enabled).length}/{state.securityControls.length}</span> controls active
-              </div>
-              <button onClick={generateAuditReport} className="w-full bg-blue-600/20 text-blue-400 border border-blue-500/30 py-2 rounded-lg text-xs hover:bg-blue-600/30">
-                Generate Audit Report
-              </button>
+            <button onClick={generateCTR} disabled={state.transactions.filter(t => t.amount > 50000).length === 0} className="w-full bg-amber-500/8 text-amber-400/70 border border-amber-500/15 py-2 rounded-lg text-[11px] font-medium hover:bg-amber-500/12 disabled:opacity-20 disabled:cursor-not-allowed">Generate CTR</button>
+          </div>
+          <div className="glass-card rounded-xl p-4 space-y-3">
+            <h3 className="text-[12px] font-semibold text-zinc-200 flex items-center gap-2"><ShieldCheck size={13} className="text-blue-400/60" /> Audit Report</h3>
+            <p className="text-[10px] text-zinc-600">System security assessment</p>
+            <div className="bg-surface-2/40 rounded-lg p-2 text-[11px] text-zinc-500 border border-border-subtle">
+              <span className="text-blue-400/70 font-semibold">{state.securityControls.filter(c => c.enabled).length}/{state.securityControls.length}</span> controls active
             </div>
+            <button onClick={generateAuditReport} className="w-full bg-blue-500/8 text-blue-400/70 border border-blue-500/15 py-2 rounded-lg text-[11px] font-medium hover:bg-blue-500/12">Generate Audit</button>
           </div>
         </div>
       )}
 
-      {/* Reports View */}
+      {/* Reports */}
       {activeView === 'reports' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-          <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><FileText size={14} /> Filed Reports ({state.complianceReports.length})</h3>
+        <div className="glass-card rounded-xl p-5 animate-fade-in">
+          <h3 className="text-[13px] font-semibold text-zinc-200 mb-3">Filed Reports ({state.complianceReports.length})</h3>
           {state.complianceReports.length === 0 ? (
-            <p className="text-xs text-gray-600 text-center py-8">No compliance reports generated yet. Use the SAR/CTR Filing tab to create reports.</p>
+            <p className="text-[11px] text-zinc-700 text-center py-8">No reports. Use SAR/CTR Filing to create.</p>
           ) : (
-            <div className="space-y-2 max-h-96 overflow-y-auto">
+            <div className="space-y-1.5 max-h-80 overflow-y-auto">
               {state.complianceReports.slice().reverse().map(report => (
-                <div key={report.id} className="bg-gray-800/50 border border-gray-700/50 rounded-lg p-3 text-xs">
+                <div key={report.id} className="bg-surface-2/20 border border-border-subtle rounded-lg px-3 py-3 text-[11px]">
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
-                      <span className={`px-1.5 py-0.5 rounded border text-[10px] font-medium ${reportTypeColor(report.type)}`}>{report.type}</span>
-                      <span className="text-white font-medium">{report.title}</span>
+                      <span className={`px-1.5 py-0.5 rounded border text-[9px] font-semibold ${reportBadge(report.type)}`}>{report.type}</span>
+                      <span className="text-zinc-200 font-medium">{report.title}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className={`text-[10px] ${report.status === 'submitted' ? 'text-green-400' : report.status === 'acknowledged' ? 'text-blue-400' : 'text-yellow-400'}`}>
-                        ● {report.status}
-                      </span>
+                      <span className={`text-[10px] font-medium ${report.status === 'submitted' ? 'text-emerald-400/60' : 'text-amber-400/60'}`}>{report.status}</span>
                       {report.status === 'draft' && (
-                        <button onClick={() => submitReport(report.id)} className="flex items-center gap-1 bg-green-600/20 text-green-400 border border-green-500/30 px-2 py-0.5 rounded text-[10px] hover:bg-green-600/30">
-                          <Send size={10} /> Submit
+                        <button onClick={() => submitReport(report.id)} className="flex items-center gap-1 bg-emerald-500/8 text-emerald-400/70 border border-emerald-500/15 px-2 py-0.5 rounded-md text-[10px] font-medium hover:bg-emerald-500/12">
+                          <Send size={9} /> Submit
                         </button>
                       )}
-                      <button className="flex items-center gap-1 bg-gray-600/20 text-gray-400 border border-gray-500/30 px-2 py-0.5 rounded text-[10px] hover:bg-gray-600/30">
-                        <Download size={10} /> Export
+                      <button className="flex items-center gap-1 bg-surface-2 text-zinc-500 border border-border-subtle px-2 py-0.5 rounded-md text-[10px] hover:text-zinc-400">
+                        <Download size={9} /> Export
                       </button>
                     </div>
                   </div>
-                  <p className="text-gray-400 mt-1">{report.summary}</p>
-                  <div className="flex gap-4 mt-2 text-[10px] text-gray-500">
-                    <span>Filed by: {report.filedBy}</span>
+                  <p className="text-zinc-500 mt-1 leading-relaxed">{report.summary}</p>
+                  <div className="flex gap-4 mt-1.5 text-[10px] text-zinc-700 font-mono">
+                    <span>{report.filedBy}</span>
                     <span>To: {report.regulatoryBody}</span>
                     <span>Due: {new Date(report.dueDate).toLocaleDateString()}</span>
-                    <span>Txs: {report.relatedTransactions.length}</span>
-                    <span>Alerts: {report.relatedAlerts.length}</span>
                   </div>
                 </div>
               ))}
@@ -334,73 +232,28 @@ export function Compliance({ state, setState }: ComplianceProps) {
         </div>
       )}
 
-      {/* Audit/Regulatory View */}
+      {/* Audit */}
       {activeView === 'audit' && (
-        <div className="space-y-4">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2"><Scale size={14} /> Compliance Checklist — BSP / AMLC Requirements</h3>
-            <div className="space-y-2">
+        <div className="space-y-3 animate-fade-in">
+          <div className="glass-card rounded-xl p-5">
+            <h3 className="text-[13px] font-semibold text-zinc-200 mb-3">BSP / AMLC Compliance Checklist</h3>
+            <div className="space-y-1.5">
               {complianceChecks.map((check, i) => (
-                <div key={i} className={`flex items-center gap-3 p-3 rounded-lg border ${check.met ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
-                  {check.met ? <CheckCircle size={16} className="text-green-400" /> : <AlertTriangle size={16} className="text-red-400" />}
+                <div key={i} className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border ${check.met ? 'bg-emerald-500/2 border-emerald-500/10' : 'bg-red-500/2 border-red-500/10'}`}>
+                  {check.met ? <CheckCircle size={14} className="text-emerald-400/60 flex-shrink-0" /> : <AlertTriangle size={14} className="text-red-400/60 flex-shrink-0" />}
                   <div className="flex-1">
-                    <div className={`text-xs font-medium ${check.met ? 'text-green-400' : 'text-red-400'}`}>{check.name}</div>
-                    <div className="text-[10px] text-gray-500">{check.desc}</div>
+                    <div className={`text-[11px] font-medium ${check.met ? 'text-emerald-400/70' : 'text-red-400/70'}`}>{check.name}</div>
+                    <div className="text-[10px] text-zinc-600">{check.desc}</div>
                   </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded ${check.met ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-                    {check.met ? 'COMPLIANT' : 'NON-COMPLIANT'}
+                  <span className={`text-[9px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded ${check.met ? 'bg-emerald-500/8 text-emerald-400/50' : 'bg-red-500/8 text-red-400/50'}`}>
+                    {check.met ? 'Pass' : 'Fail'}
                   </span>
                 </div>
               ))}
             </div>
           </div>
-
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <h3 className="text-sm font-semibold text-white mb-3">📋 Audit Trail Summary</h3>
-            <div className="grid grid-cols-4 gap-3 mb-3">
-              {[
-                { label: 'Total Events', value: state.eventLog.length },
-                { label: 'Security Events', value: state.eventLog.filter(e => e.includes('[SECURITY]') || e.includes('[BLOCKED]')).length },
-                { label: 'Auth Events', value: state.eventLog.filter(e => e.includes('[AUTH]')).length },
-                { label: 'SOC Actions', value: state.eventLog.filter(e => e.includes('[SOC]')).length },
-              ].map((s, i) => (
-                <div key={i} className="bg-gray-800 rounded-lg p-2 text-center">
-                  <div className="text-lg font-bold text-white">{s.value}</div>
-                  <div className="text-[10px] text-gray-500">{s.label}</div>
-                </div>
-              ))}
-            </div>
-            <div className="bg-black rounded-lg p-3 font-mono text-[10px] max-h-48 overflow-y-auto space-y-0.5">
-              {state.eventLog.slice(-40).reverse().map((log, i) => (
-                <div key={i} className={
-                  log.includes('[COMPLIANCE]') ? 'text-teal-400' :
-                  log.includes('[SECURITY]') || log.includes('[BLOCKED]') ? 'text-red-400' :
-                  log.includes('[THREAT-INTEL]') ? 'text-indigo-400' :
-                  'text-gray-500'
-                }>{log}</div>
-              ))}
-            </div>
-          </div>
         </div>
       )}
-
-      {/* Concepts */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-        <h3 className="text-sm font-semibold text-white mb-3">🎓 Applied Concepts</h3>
-        <div className="grid grid-cols-4 gap-2">
-          {[
-            { name: 'SAR/CTR Filing', desc: 'Mandatory reporting of suspicious activity and large currency transactions' },
-            { name: 'AML Compliance', desc: 'Anti-Money Laundering program with CDD, EDD, and transaction monitoring' },
-            { name: 'Regulatory Framework', desc: 'BSP circulars, RA 9160, and AMLC requirements for financial institutions' },
-            { name: 'Audit Trail', desc: 'Non-repudiation through comprehensive logging of all system actions' },
-          ].map(c => (
-            <div key={c.name} className="bg-gray-800 rounded-lg p-2.5">
-              <div className="text-xs font-medium text-teal-400">{c.name}</div>
-              <div className="text-[10px] text-gray-500 mt-1">{c.desc}</div>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
