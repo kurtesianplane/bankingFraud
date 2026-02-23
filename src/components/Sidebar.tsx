@@ -79,6 +79,12 @@ export function Sidebar({ activeTab, onTabChange, alertCount }: SidebarProps) {
           </div>
         </div>
       </div>
+        {/* Creator Info */}
+        <div className="px-4 pb-4 mt-auto">
+          <div className="text-[11px] text-zinc-500 font-medium text-center">
+            created by <a href="https://kurtesianplane.github.io/" target="_blank" rel="noopener noreferrer" className="underline text-accent">kurtesianplane</a>
+          </div>
+        </div>
     </div>
   );
 }
